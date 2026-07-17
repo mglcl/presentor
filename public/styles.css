@@ -1,0 +1,26 @@
+:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #101114; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: #101114; color: #f7f7f5; }
+.app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; padding: 22px; gap: 18px; }
+.topbar, .controls { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.brand { display: flex; gap: 10px; align-items: center; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; color: #aeb0b8; }
+.badge { border: 1px solid #3d4048; border-radius: 999px; padding: 5px 10px; font-size: 12px; color: #e7e8eb; }
+.slide { width: min(100%, 1300px); aspect-ratio: 16 / 9; margin: auto; background: #fff; border-radius: 3px; box-shadow: 0 18px 55px #0007; position: relative; transition: background-color 220ms ease; }
+.slide[data-slide="0"] { background: #fca5a5; }
+.slide[data-slide="1"] { background: #fdba74; }
+.slide[data-slide="2"] { background: #fde68a; }
+.slide[data-slide="3"] { background: #86efac; }
+.slide[data-slide="4"] { background: #67e8f9; }
+.slide[data-slide="5"] { background: #93c5fd; }
+.slide[data-slide="6"] { background: #c4b5fd; }
+.slide[data-slide="7"] { background: #f0abfc; }
+.slide::after { content: ''; position: absolute; inset: 0; border: 1px solid #00000012; border-radius: inherit; }
+.controls { width: min(100%, 1300px); margin: 0 auto; }
+button { appearance: none; border: 0; border-radius: 8px; padding: 10px 15px; color: #fff; background: #30333b; font: inherit; cursor: pointer; }
+button:hover:not(:disabled) { background: #444852; }
+button:disabled { opacity: .38; cursor: not-allowed; }
+.slide-count { color: #aeb0b8; font-size: 14px; }
+.viewer .app { grid-template-rows: 1fr; padding: 0; }
+.viewer .slide { width: 100vw; max-height: 100vh; border-radius: 0; box-shadow: none; }
+.viewer-note { position: fixed; right: 16px; bottom: 12px; font-size: 11px; color: #aeb0b8; opacity: .65; }
+@media (max-width: 600px) { .app { padding: 14px; } .brand { font-size: 11px; } }
