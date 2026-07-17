@@ -3,73 +3,80 @@ const fs = require('fs');
 const path = require('path');
 
 const publicDir = path.join(__dirname, 'public');
-const clientStreams = new Set();
-let currentSlide = 0;
 const slideCount = 8;
+const streams = new Set();
+const state = {
+  currentSlide: 0,
+  ratings: {},
+  playerNames: Array.from({ length: 19 }, (_, index) => `Player ${String(index + 1).padStart(2, '0')}`),
+  race: { running: false, order: [] },
+  gameUrl: 'https://example.com'
+};
 
-function sendJson(res, statusCode, payload) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(payload));
+function snapshot() {
+  const ratingCounts = [1, 2, 3, 4, 5].map((rating) => Object.values(state.ratings).filter((value) => value === rating).length);
+  return { currentSlide: state.currentSlide, slideCount, ratingCounts, playerNames: state.playerNames, race: state.race, gameUrl: state.gameUrl };
 }
-
+function sendJson(res, code, payload) { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(payload)); }
 function broadcast() {
-  const message = `data: ${JSON.stringify({ currentSlide, slideCount })}\n\n`;
-  for (const stream of clientStreams) stream.write(message);
+  const message = `data: ${JSON.stringify(snapshot())}\n\n`;
+  for (const stream of streams) stream.write(message);
 }
-
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  if (url.pathname === '/events') {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive'
-    });
-    res.write(`data: ${JSON.stringify({ currentSlide, slideCount })}\n\n`);
-    clientStreams.add(res);
-    req.on('close', () => clientStreams.delete(res));
-    return;
-  }
-
-  if (url.pathname === '/api/state' && req.method === 'GET') {
-    return sendJson(res, 200, { currentSlide, slideCount });
-  }
-
-  if (url.pathname === '/api/state' && req.method === 'POST') {
+function readBody(req) {
+  return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const requestedSlide = Number(JSON.parse(body).currentSlide);
-        if (!Number.isInteger(requestedSlide) || requestedSlide < 0 || requestedSlide >= slideCount) {
-          return sendJson(res, 400, { error: 'Invalid slide number' });
-        }
-        currentSlide = requestedSlide;
-        broadcast();
-        sendJson(res, 200, { currentSlide, slideCount });
-      } catch {
-        sendJson(res, 400, { error: 'Invalid request body' });
-      }
-    });
-    return;
+    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch { reject(new Error('Invalid JSON')); } });
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (url.pathname === '/events') {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.write(`data: ${JSON.stringify(snapshot())}\n\n`);
+    streams.add(res); req.on('close', () => streams.delete(res)); return;
   }
+  if (url.pathname === '/api/state' && req.method === 'GET') return sendJson(res, 200, snapshot());
 
-  const requestedFile = url.pathname === '/viewer' ? 'viewer.html' : url.pathname === '/' ? 'presenter.html' : url.pathname.slice(1);
-  const safeFile = path.normalize(requestedFile).replace(/^\.{2}(?:[\\/]|$)/, '');
-  const filePath = path.join(publicDir, safeFile);
+  try {
+    const body = ['POST', 'PUT'].includes(req.method) ? await readBody(req) : null;
+    if (url.pathname === '/api/state' && req.method === 'POST') {
+      if (!Number.isInteger(body.currentSlide) || body.currentSlide < 0 || body.currentSlide >= slideCount) return sendJson(res, 400, { error: 'Invalid slide number' });
+      state.currentSlide = body.currentSlide; broadcast(); return sendJson(res, 200, snapshot());
+    }
+    if (url.pathname === '/api/ratings' && req.method === 'POST') {
+      if (!/^[a-z0-9-]{8,64}$/i.test(body.clientId) || !Number.isInteger(body.rating) || body.rating < 1 || body.rating > 5) return sendJson(res, 400, { error: 'Invalid rating' });
+      state.ratings[body.clientId] = body.rating; broadcast(); return sendJson(res, 200, snapshot());
+    }
+    if (url.pathname === '/api/players' && req.method === 'POST') {
+      if (!Array.isArray(body.playerNames) || body.playerNames.length !== 19) return sendJson(res, 400, { error: 'Exactly 19 names are required' });
+      state.playerNames = body.playerNames.map((name, index) => String(name).trim().slice(0, 32) || `Player ${index + 1}`);
+      state.race = { running: false, order: [] }; broadcast(); return sendJson(res, 200, snapshot());
+    }
+    if (url.pathname === '/api/race' && req.method === 'POST') {
+      if (state.race.running) return sendJson(res, 409, { error: 'Race already running' });
+      state.race = { running: true, order: [] }; broadcast();
+      setTimeout(() => {
+        state.race = { running: false, order: [...state.playerNames].sort(() => Math.random() - 0.5) };
+        broadcast();
+      }, 4200);
+      return sendJson(res, 200, snapshot());
+    }
+    if (url.pathname === '/api/game' && req.method === 'POST') {
+      try { state.gameUrl = new URL(body.gameUrl).toString(); } catch { return sendJson(res, 400, { error: 'Enter a valid full URL' }); }
+      broadcast(); return sendJson(res, 200, snapshot());
+    }
+  } catch { return sendJson(res, 400, { error: 'Invalid request' }); }
+
+  const requested = url.pathname === '/viewer' ? 'viewer.html' : url.pathname === '/' ? 'presenter.html' : url.pathname.slice(1);
+  const filePath = path.join(publicDir, path.normalize(requested));
   if (!filePath.startsWith(publicDir)) return sendJson(res, 403, { error: 'Forbidden' });
-
-  fs.readFile(filePath, (error, contents) => {
+  fs.readFile(filePath, (error, content) => {
     if (error) return sendJson(res, 404, { error: 'Not found' });
-    const extension = path.extname(filePath);
     const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
-    res.writeHead(200, { 'Content-Type': types[extension] || 'application/octet-stream' });
-    res.end(contents);
+    res.writeHead(200, { 'Content-Type': types[path.extname(filePath)] || 'application/octet-stream' }); res.end(content);
   });
 });
-
-server.listen(process.env.PORT || 3000, () => {
-  console.log(`Presenter: http://localhost:${process.env.PORT || 3000}`);
-  console.log(`Viewer:    http://localhost:${process.env.PORT || 3000}/viewer`);
-});
+const port = process.env.PORT || 3000;
+server.listen(port, () => console.log(`Presenter: http://localhost:${port}\nViewer: http://localhost:${port}/viewer`));
